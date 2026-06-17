@@ -42,7 +42,7 @@ if load_btn:
         with st.spinner("Loading embeddings..."):
             embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en-v1.5")
             vectorstore = FAISS.load_local(
-                FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True
+                MEDICAL_FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True
             )
             retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
