@@ -17,9 +17,13 @@ st.divider()
 #   - "/content/drive/MyDrive/medical_faiss_index"            -> Google Drive (in Colab)
 FAISS_INDEX_PATH = "medical_faiss_index"
 
+# Try to get the key from Streamlit secrets first; only show the input box if it's missing
+groq_key = st.secrets.get("GROQ_API_KEY", None)
+
 with st.sidebar:
     st.header("⚙️ Setup")
-    groq_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
+    if not groq_key:
+        groq_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
     st.caption(f"Loading embeddings from: `{FAISS_INDEX_PATH}`")
     load_btn = st.button("⚡ Load Report & Start", use_container_width=True)
     st.warning("⚠️ For informational purposes only. Always consult a doctor.")
