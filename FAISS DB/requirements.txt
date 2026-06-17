@@ -1,7 +1,0 @@
-streamlit
-langchain
-langchain-community
-langchain-openai
-langchain-core
-faiss-cpu
-sentence-transformers
