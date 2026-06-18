@@ -1,5 +1,7 @@
 import streamlit as st
 import os
+from pypdf import PdfReader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
@@ -11,18 +13,19 @@ st.set_page_config(page_title="MedReport AI", page_icon="🩺", layout="wide")
 st.title("🩺 Medical Report Intelligence Assistant")
 st.divider()
 
-# Path to the FAISS index folder (index.faiss + index.pkl) that was already
-# built and saved separately.
-FAISS_INDEX_PATH = "FAISS DB"   # <-- matches the actual folder name in your repo
+# Fallback path if no file is uploaded — your pre-built embeddings folder
+FAISS_INDEX_PATH = "FAISS DB"
 
-# Try to get the key from Streamlit secrets first; only show the input box if it's missing
 groq_key = st.secrets.get("GROQ_API_KEY", None)
 
 with st.sidebar:
     st.header("⚙️ Setup")
     if not groq_key:
         groq_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
-    st.caption(f"Loading embeddings from: `{FAISS_INDEX_PATH}`")
+
+    uploaded_file = st.file_uploader("📄 Upload your medical report (PDF)", type=["pdf"])
+    st.caption(f"If no file is uploaded, loads saved embeddings from: `{FAISS_INDEX_PATH}`")
+
     load_btn = st.button("⚡ Load Report & Start", use_container_width=True)
     st.warning("⚠️ For informational purposes only. Always consult a doctor.")
 
@@ -34,14 +37,31 @@ if "qa_chain" not in st.session_state:
 if load_btn:
     if not groq_key:
         st.sidebar.error("Please provide your Groq API key.")
-    elif not os.path.exists(FAISS_INDEX_PATH):
-        st.sidebar.error(f"No embeddings found at '{FAISS_INDEX_PATH}'. Build them first.")
+    elif not uploaded_file and not os.path.exists(FAISS_INDEX_PATH):
+        st.sidebar.error("Please upload a PDF, or make sure saved embeddings exist.")
     else:
-        with st.spinner("Loading embeddings..."):
+        with st.spinner("Reading report and building embeddings..."):
             embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en-v1.5")
-            vectorstore = FAISS.load_local(
-                FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True
-            )
+
+            if uploaded_file:
+                # Extract text from the uploaded PDF
+                reader = PdfReader(uploaded_file)
+                raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+
+                if not raw_text.strip():
+                    st.sidebar.error("Couldn't extract any text from this PDF. Is it a scanned image?")
+                    st.stop()
+
+                # Split into chunks and build a fresh FAISS index
+                splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                chunks = splitter.split_text(raw_text)
+                vectorstore = FAISS.from_texts(chunks, embeddings)
+            else:
+                # Fall back to the pre-built index
+                vectorstore = FAISS.load_local(
+                    FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True
+                )
+
             retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
             llm = ChatOpenAI(
@@ -86,6 +106,3 @@ if st.session_state.qa_chain:
             with st.spinner("Thinking..."):
                 answer = st.session_state.qa_chain.invoke(user_input)
                 st.write(answer)
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-else:
-    st.info("👈 Enter your Groq API key and click 'Load Report & Start'.")
