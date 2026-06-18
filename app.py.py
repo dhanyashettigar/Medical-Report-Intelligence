@@ -13,7 +13,6 @@ st.set_page_config(page_title="MedReport AI", page_icon="🩺", layout="wide")
 st.title("🩺 Medical Report Intelligence Assistant")
 st.divider()
 
-# Fallback path if no file is uploaded — your pre-built embeddings folder
 FAISS_INDEX_PATH = "FAISS DB"
 
 groq_key = st.secrets.get("GROQ_API_KEY", None)
@@ -34,6 +33,12 @@ if "messages" not in st.session_state:
 if "qa_chain" not in st.session_state:
     st.session_state.qa_chain = None
 
+def get_full_text_from_vectorstore(vs):
+    try:
+        return "\n\n".join(doc.page_content for doc in vs.docstore._dict.values())
+    except Exception:
+        return ""
+
 if load_btn:
     if not groq_key:
         st.sidebar.error("Please provide your Groq API key.")
@@ -44,7 +49,6 @@ if load_btn:
             embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en-v1.5")
 
             if uploaded_file:
-                # Extract text from the uploaded PDF
                 reader = PdfReader(uploaded_file)
                 raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
@@ -52,15 +56,15 @@ if load_btn:
                     st.sidebar.error("Couldn't extract any text from this PDF. Is it a scanned image?")
                     st.stop()
 
-                # Split into chunks and build a fresh FAISS index
                 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
                 chunks = splitter.split_text(raw_text)
                 vectorstore = FAISS.from_texts(chunks, embeddings)
+                full_text = raw_text
             else:
-                # Fall back to the pre-built index
                 vectorstore = FAISS.load_local(
                     FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True
                 )
+                full_text = get_full_text_from_vectorstore(vectorstore)
 
             retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
@@ -70,7 +74,8 @@ if load_btn:
                 base_url="https://api.groq.com/openai/v1",
             )
 
-            prompt = PromptTemplate(
+            # Chain used for follow-up Q&A
+            qa_prompt = PromptTemplate(
                 template="""You are a medical report assistant. Use the context below to explain the medical report in simple language, highlight abnormal values, give a health summary, and suggest lifestyle tips.
 
 Context: {context}
@@ -85,11 +90,29 @@ Answer in simple, clear language a patient can understand:""",
 
             st.session_state.qa_chain = (
                 {"context": retriever | format_docs, "question": RunnablePassthrough()}
-                | prompt
+                | qa_prompt
                 | llm
                 | StrOutputParser()
             )
-            st.session_state.messages = []
+
+            # Auto-generate a full explanation of the report before any question is asked
+            summary_prompt = PromptTemplate(
+                template="""You are a medical report assistant. Read the following medical report and explain it to the patient in simple, clear language. Cover:
+- What the report is about
+- Each test/value and whether it's normal or abnormal
+- An overall health summary
+- Practical lifestyle tips
+
+Report:
+{report}
+
+Explanation:""",
+                input_variables=["report"],
+            )
+            summary_chain = summary_prompt | llm | StrOutputParser()
+            intro_text = summary_chain.invoke({"report": full_text[:15000]})
+
+            st.session_state.messages = [{"role": "assistant", "content": intro_text}]
             st.sidebar.success("✅ Ready! Ask your questions below.")
 
 for msg in st.session_state.messages:
@@ -106,3 +129,6 @@ if st.session_state.qa_chain:
             with st.spinner("Thinking..."):
                 answer = st.session_state.qa_chain.invoke(user_input)
                 st.write(answer)
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+else:
+    st.info("👈 Enter your Groq API key, optionally upload a PDF, and click 'Load Report & Start'.")
