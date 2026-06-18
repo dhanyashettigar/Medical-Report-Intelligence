@@ -6,3 +6,4 @@ langchain-core
 faiss-cpu
 sentence-transformers
 pypdf
+langchain-text-splitters
